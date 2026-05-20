@@ -5,16 +5,16 @@ export function createAnnouncementsTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_announcements",
     definition: {
       title: "Get Announcements",
-      description: "Returns current Rohlik announcements as JSON: {announcements: [{title, message, date}]} or {announcements: []} when none active.",
+      description: "Returns current Rohlik announcements as JSON. Structure: {announcements: [{title, message, date}]} or {announcements: []} when none active.",
       inputSchema: {}
     },
     handler: async () => {
       try {
         const api = createRohlikAPI();
         const data = await api.getAnnouncements();
-        const announcements = Array.isArray(data) ? data : (data ? [data] : []);
+        // API returns the full structure directly — pass through as-is
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ announcements }, null, 2) }]
+          content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }]
         };
       } catch (error) {
         return {
