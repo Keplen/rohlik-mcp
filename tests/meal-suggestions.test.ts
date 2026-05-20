@@ -42,16 +42,17 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'breakfast' });
 
-      const text = result.content[0].text;
+      const data = JSON.parse(result.content[0].text);
+      const names = data.items.map((i: any) => i.name);
 
       // Should include breakfast items
-      expect(text).toContain('mléko');
-      expect(text).toContain('rohlíky');
-      expect(text).toContain('Máslo');
+      expect(names.some((n: string) => n.toLowerCase().includes('mléko'))).toBe(true);
+      expect(names.some((n: string) => n.toLowerCase().includes('rohlík'))).toBe(true);
+      expect(names.some((n: string) => n.toLowerCase().includes('máslo'))).toBe(true);
 
       // Should NOT include lunch items
-      expect(text).not.toContain('Kuřecí');
-      expect(text).not.toContain('fusilli');
+      expect(names.some((n: string) => n.includes('Kuřecí'))).toBe(false);
+      expect(names.some((n: string) => n.includes('fusilli'))).toBe(false);
     });
 
     it('should filter products by lunch categories', async () => {
@@ -71,14 +72,15 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'lunch' });
 
-      const text = result.content[0].text;
+      const data = JSON.parse(result.content[0].text);
+      const names = data.items.map((i: any) => i.name);
 
       // Should include lunch items
-      expect(text).toContain('Kuřecí');
-      expect(text).toContain('fusilli');
+      expect(names.some((n: string) => n.includes('Kuřecí'))).toBe(true);
+      expect(names.some((n: string) => n.includes('fusilli'))).toBe(true);
 
       // Should NOT include breakfast items
-      expect(text).not.toContain('rohlíky');
+      expect(names.some((n: string) => n.toLowerCase().includes('rohlík'))).toBe(false);
     });
 
     it('should filter products by snack categories', async () => {
@@ -98,14 +100,15 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'snack' });
 
-      const text = result.content[0].text;
+      const data = JSON.parse(result.content[0].text);
+      const names = data.items.map((i: any) => i.name);
 
       // Should include snack items
-      expect(text).toContain('čokoláda');
-      expect(text).toContain('Banány');
+      expect(names.some((n: string) => n.toLowerCase().includes('čokoláda'))).toBe(true);
+      expect(names.some((n: string) => n.includes('Banány'))).toBe(true);
 
       // Should NOT include lunch items
-      expect(text).not.toContain('Kuřecí');
+      expect(names.some((n: string) => n.includes('Kuřecí'))).toBe(false);
     });
 
     it('should handle case-insensitive category matching', async () => {
@@ -126,8 +129,9 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'breakfast' });
 
-      const text = result.content[0].text;
-      expect(text).toContain('Test Milk');
+      const data = JSON.parse(result.content[0].text);
+      const names = data.items.map((i: any) => i.name);
+      expect(names).toContain('Test Milk');
     });
   });
 
@@ -173,11 +177,12 @@ describe('meal-suggestions: data transformation', () => {
         prefer_frequent: true
       });
 
-      const text = result.content[0].text;
+      const data = JSON.parse(result.content[0].text);
 
-      // Milk should be included and appear 3 times
-      expect(text).toContain('Milk');
-      expect(text).toContain('Ordered 3×');
+      // Milk should be included and appear 3 times (ordered in 3 orders)
+      const milkItem = data.items.find((i: any) => i.name === 'Milk');
+      expect(milkItem).toBeDefined();
+      expect(milkItem.frequency).toBe(3);
     });
 
     it('should sort by quantity when prefer_frequent is false', async () => {
@@ -209,12 +214,10 @@ describe('meal-suggestions: data transformation', () => {
         prefer_frequent: false
       });
 
-      const text = result.content[0].text;
-      const lines = text.split('\n');
+      const data = JSON.parse(result.content[0].text);
 
-      // Bread should be first (higher total quantity)
-      const firstProduct = lines.find(l => l.startsWith('1. '));
-      expect(firstProduct).toContain('Bread');
+      // Bread should be first (higher total quantity: 5 vs 1)
+      expect(data.items[0].name).toBe('Bread');
     });
   });
 
@@ -245,12 +248,11 @@ describe('meal-suggestions: data transformation', () => {
         items_count: 5
       });
 
-      const text = result.content[0].text;
+      const data = JSON.parse(result.content[0].text);
 
-      // Should have 5 items
-      expect(text).toContain('1. Breakfast Product');
-      expect(text).toContain('5. Breakfast Product');
-      expect(text).not.toContain('6. Breakfast Product');
+      // Should have exactly 5 items
+      expect(data.count).toBe(5);
+      expect(data.items.length).toBe(5);
     });
   });
 
@@ -320,8 +322,10 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'breakfast' });
 
-      const text = result.content[0].text;
-      expect(text).toContain('No items found for breakfast');
+      // Handler returns JSON error object when no items match
+      const data = JSON.parse(result.content[0].text);
+      expect(data.error).toBe('No items found');
+      expect(data.meal_type).toBe('breakfast');
     });
 
     it('should handle products without categories', async () => {
@@ -377,7 +381,7 @@ describe('meal-suggestions: data transformation', () => {
    * Test output formatting
    */
   describe('output formatting', () => {
-    it('should include relevant category names in output', async () => {
+    it('should include meal_type and count in JSON output', async () => {
       const products = createBreakfastProducts();
       const orders = [createMockOrder('order1')];
       const orderDetails = [createMockOrderDetail('order1', products)];
@@ -390,11 +394,13 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'breakfast' });
 
-      const text = result.content[0].text;
-      expect(text).toContain('Relevant categories:');
+      const data = JSON.parse(result.content[0].text);
+      expect(data.meal_type).toBe('breakfast');
+      expect(typeof data.count).toBe('number');
+      expect(data.analyzed_orders).toBeGreaterThan(0);
     });
 
-    it('should show correct emoji for each meal type', async () => {
+    it('should return valid JSON for each meal type', async () => {
       const products = createBreakfastProducts();
 
       const orders = [createMockOrder('order1')];
@@ -408,14 +414,15 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
 
       const breakfastResult = await tool.handler({ meal_type: 'breakfast' });
-      expect(breakfastResult.content[0].text).toContain('🍳');
+      const breakfastData = JSON.parse(breakfastResult.content[0].text);
+      expect(breakfastData.meal_type).toBe('breakfast');
 
       const snackResult = await tool.handler({ meal_type: 'snack' });
-      // Snack has different categories, so may not match - just check for proper formatting
+      // Snack categories don't overlap with breakfast products — error JSON expected
       expect(snackResult.content[0].type).toBe('text');
     });
 
-    it('should include product IDs for easy ordering', async () => {
+    it('should include numeric product IDs in items', async () => {
       const products = createBreakfastProducts();
       const orders = [createMockOrder('order1')];
       const orderDetails = [createMockOrderDetail('order1', products)];
@@ -428,9 +435,13 @@ describe('meal-suggestions: data transformation', () => {
       const tool = createMealSuggestionsTool(() => mockAPI as any);
       const result = await tool.handler({ meal_type: 'breakfast' });
 
-      const text = result.content[0].text;
-      expect(text).toContain('🆔');
-      expect(text).toMatch(/🆔 \d+/);
+      const data = JSON.parse(result.content[0].text);
+      expect(data.items.length).toBeGreaterThan(0);
+      // Each item must have a numeric id
+      data.items.forEach((item: any) => {
+        expect(typeof item.id).toBe('number');
+        expect(item.id).toBeGreaterThan(0);
+      });
     });
   });
 });

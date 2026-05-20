@@ -1,21 +1,20 @@
-import { RohlikAPI } from "../rohlik-api.js";
-import { createSearchProductsTool } from "./search-products.js";
-import { createCartManagementTools } from "./cart-management.js";
-import { createShoppingListsTool } from "./shopping-lists.js";
-import { createAccountDataTool } from "./account-data.js";
-
-export function createAllTools(createRohlikAPI: () => RohlikAPI) {
-  const searchProducts = createSearchProductsTool(createRohlikAPI);
-  const cartTools = createCartManagementTools(createRohlikAPI);
-  const shoppingLists = createShoppingListsTool(createRohlikAPI);
-  const accountData = createAccountDataTool(createRohlikAPI);
-
-  return {
-    [searchProducts.name]: searchProducts,
-    [cartTools.addToCart.name]: cartTools.addToCart,
-    [cartTools.getCartContent.name]: cartTools.getCartContent,
-    [cartTools.removeFromCart.name]: cartTools.removeFromCart,
-    [shoppingLists.name]: shoppingLists,
-    [accountData.name]: accountData,
-  };
-}
+// Re-export all tool factories for external consumers
+export { createSearchProductsTool } from "./search-products.js";
+export { createCartManagementTools } from "./cart-management.js";
+export { createShoppingListsTool } from "./shopping-lists.js";
+export { createAccountDataTool } from "./account-data.js";
+export { createOrderHistoryTool } from "./order-history.js";
+export { createOrderDetailTool } from "./order-detail.js";
+export { createUpcomingOrdersTool } from "./upcoming-orders.js";
+export { createDeliveryInfoTool } from "./delivery-info.js";
+export { createDeliverySlotsTool } from "./delivery-slots.js";
+export { createPremiumInfoTool } from "./premium-info.js";
+export { createAnnouncementsTool } from "./announcements.js";
+export { createReusableBagsTool } from "./reusable-bags.js";
+export { createFrequentItemsTool } from "./frequent-items.js";
+export { createMealSuggestionsTool } from "./meal-suggestions.js";
+export { createShoppingScenariosTool } from "./shopping-scenarios.js";
+export { createDiscountedItemsTool } from "./discounted-items.js";
+export { createProductDetailTool } from "./get-product-detail.js";
+export { createCheckAllergensTool } from "./check-allergens.js";
+export { createAskMaiaTool } from "./ask-maia.js";

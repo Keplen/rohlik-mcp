@@ -6,7 +6,7 @@ export function createShoppingListsTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_shopping_list",
     definition: {
       title: "Get Shopping List",
-      description: "Get a shopping list by ID",
+      description: "Returns a shopping list by ID as JSON: {name, count, products[{id, name, quantity}]}.",
       inputSchema: {
         shopping_list_id: z.string().min(1, "Shopping list ID is required").describe("The ID of the shopping list to retrieve")
       }
@@ -16,30 +16,21 @@ export function createShoppingListsTool(createRohlikAPI: () => RohlikAPI) {
         const api = createRohlikAPI();
         const shoppingList = await api.getShoppingList(shopping_list_id);
 
-        if (!shoppingList.products || shoppingList.products.length === 0) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Shopping list "${shoppingList.name}" is empty.`
-              }
-            ]
-          };
-        }
-
-        const output = `Shopping List: ${shoppingList.name}
-Total products: ${shoppingList.products.length}
-
-Products:
-${shoppingList.products.map((product, index) => 
-  `${index + 1}. ${product.name || 'Unknown product'}`
-).join('\n')}`;
+        const result = {
+          name: shoppingList.name,
+          count: shoppingList.products?.length ?? 0,
+          products: (shoppingList.products || []).map((product: any) => ({
+            id: product.productId || product.id || null,
+            name: product.name || product.productName || null,
+            quantity: product.quantity || product.amount || null,
+          }))
+        };
 
         return {
           content: [
             {
               type: "text" as const,
-              text: output
+              text: JSON.stringify(result, null, 2)
             }
           ]
         };
