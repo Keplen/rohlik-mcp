@@ -96,4 +96,5 @@ npm run inspect  # test přes MCP Inspector
 
 MIT License — viz [LICENSE](LICENSE).
 
-Původní MCP server: [tomaspavlin/rohlik-mcp](https://github.com/tomaspavlin/rohlik-mcp) (Tomas Pavlin).
+Původní MCP server: [tomaspavlin/rohlik-mcp](https://github.com/tomaspavlin/rohlik-mcp) (Tomas Pavlin).  
+Nové endpointy (Maia AI assistant, Chef recipes, allergen API) objeveny vlastním reverse engineeringem přes Chrome DevTools.
