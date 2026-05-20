@@ -69,7 +69,7 @@ npm install -g github:Keplen/rohlik-mcp
 - `ask_maia` — Pošle zprávu Maie a vrátí JSON: `response` (text), `recipes[{id,name}]`, `product_groups[{title,product_ids[]}]`. `product_groups` je neprázdný jen když Maia aktivně přidává do košíku. ⚠️ Maia může halucinovat produkty — vždy ověř přes `check_allergens` nebo `get_product_detail`.
 
 ### Objednávky a doručení
-- `get_order_history` — Historie doručených objednávek: `id`, `date`, `total_czk`, `items_count`. `total_czk` zahrnuje tašky/balení, součet `items[*].paid_czk` může být o 10–30 Kč nižší.
+- `get_order_history` — Historie doručených objednávek jako JSON: `{count, orders[{id, date, total_czk, items_count, items_total_quantity}]}`. Pro detailní rozpis produktů použij `get_order_detail` s `id`.
 - `get_order_detail` — Detailní přehled objednávky se všemi produkty: `paid_czk`, `unit_price_czk`.
 - `get_upcoming_orders` — Naplánované budoucí objednávky.
 - `get_delivery_info` — Aktuální doručovací informace.
@@ -77,11 +77,11 @@ npm install -g github:Keplen/rohlik-mcp
 
 ### Účet
 - `get_account_data` — Kompletní snapshot účtu: košík, doručení, poslední objednávka, premium, oznámení, tašky.
-- `get_shopping_list` — Nákupní seznam podle ID.
+- `get_shopping_list` — Nákupní seznam podle ID jako JSON: `{name, count, products[{id,name,quantity}]}`.
 - `get_premium_info` — Stav Xtra/Premium předplatného a úspory.
-- `get_announcements` — Aktuální oznámení.
-- `get_reusable_bags_info` — Přehled zálohovaných tašek.
-- `get_shopping_scenarios` — Průvodce co MCP umí.
+- `get_announcements` — Aktuální oznámení jako JSON: `{announcements:[]}`.
+- `get_reusable_bags_info` — Přehled zálohovaných tašek jako JSON: `{current, max, deposit{amount,currency}, feedbackOptions[]}`.
+- `get_shopping_scenarios` — Textový průvodce co MCP umí a příklady promptů. Záměrně vrací text, ne JSON.
 
 ## Vývoj
 
