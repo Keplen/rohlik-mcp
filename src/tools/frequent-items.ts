@@ -13,18 +13,12 @@ interface ProductFrequency {
   categoryId?: number;
 }
 
-interface CategoryStats {
-  categoryName: string;
-  categoryId: number;
-  products: ProductFrequency[];
-}
-
 export function createFrequentItemsTool(createRohlikAPI: () => RohlikAPI) {
   return {
     name: "get_frequent_items",
     definition: {
       title: "Get Frequent Items",
-      description: "Analyze your order history to find the most frequently purchased items",
+      description: "Analyzes past orders and returns frequently bought products as JSON: {analyzed_orders, total_distinct_products, items[{id, name, brand, frequency, total_units, avg_price_czk, last_ordered}]}. frequency = number of orders containing this product. avg_price_czk = average paid price across orders. last_ordered is ISO 8601. Use for smart re-order suggestions. brand may be null for unbranded products.",
       inputSchema: {
         orders_to_analyze: z.number().min(1).max(20).default(5).describe("Number of recent orders to analyze (1-20, default: 5)"),
         top_items: z.number().min(3).max(30).default(10).describe("Number of top items to return overall (3-30, default: 10)"),
@@ -68,8 +62,8 @@ export function createFrequentItemsTool(createRohlikAPI: () => RohlikAPI) {
             if (!orderDetail) continue;
 
             processedOrders++;
-            const products = orderDetail.products || orderDetail.items || [];
-            const orderDate = orderDetail.deliveredAt || orderDetail.createdAt;
+            const products = orderDetail.items || orderDetail.products || [];
+            const orderDate = orderDetail.orderTime || orderDetail.deliveredAt || orderDetail.createdAt;
 
             for (const product of products) {
               const productId = product.productId || product.id;
@@ -91,10 +85,11 @@ export function createFrequentItemsTool(createRohlikAPI: () => RohlikAPI) {
                 existing.frequency++;
                 existing.totalQuantity += (product.quantity || 1);
 
-                // Update average price
-                if (product.price) {
+                // Update average price (priceComposition.total.amount = actual paid price)
+                const paidPrice = product.priceComposition?.total?.amount;
+                if (paidPrice) {
                   const currentAvg = existing.averagePrice || 0;
-                  existing.averagePrice = (currentAvg * (existing.frequency - 1) + product.price) / existing.frequency;
+                  existing.averagePrice = (currentAvg * (existing.frequency - 1) + paidPrice) / existing.frequency;
                 }
 
                 // Update last order date if newer
@@ -107,9 +102,9 @@ export function createFrequentItemsTool(createRohlikAPI: () => RohlikAPI) {
                   productName,
                   brand: product.brand || '',
                   frequency: 1,
-                  totalQuantity: product.quantity || 1,
+                  totalQuantity: product.quantity || product.amount || 1,
                   lastOrderDate: orderDate,
-                  averagePrice: product.price || 0,
+                  averagePrice: product.priceComposition?.total?.amount || 0,
                   category: categoryName,
                   categoryId: categoryId
                 });
@@ -121,96 +116,55 @@ export function createFrequentItemsTool(createRohlikAPI: () => RohlikAPI) {
           }
         }
 
-        // Step 3: Sort by frequency and get top items
+        // Step 3: Batch fetch brands for all collected product IDs
+        const allIds = Array.from(productMap.keys());
+        const brandMap: Record<string, string> = {};
+        try {
+          const batchSize = 20;
+          for (let i = 0; i < allIds.length; i += batchSize) {
+            const chunk = allIds.slice(i, i + batchSize);
+            const params = chunk.map((id: string) => `products=${id}`).join('&');
+            const brandData = await api.makeRequest(`/api/v1/products?${params}`);
+            const items = brandData.products || (Array.isArray(brandData) ? brandData : []);
+            for (const p of items) {
+              if (p.id && p.brand) brandMap[String(p.id)] = p.brand;
+            }
+          }
+        } catch (e) { /* brand fetch is best-effort */ }
+
+        // Step 4: Sort by frequency and get top items
         const sortedProducts = Array.from(productMap.values())
           .sort((a, b) => b.frequency - a.frequency)
           .slice(0, top_items);
 
         if (sortedProducts.length === 0) {
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Analyzed ${processedOrders} orders but found no products. This might be due to API changes or data format issues.`
-              }
-            ]
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ error: "No products found", analyzed_orders: processedOrders })
+            }]
           };
         }
 
-        // Step 4: Group by category
-        const categoryMap = new Map<number, CategoryStats>();
-
-        for (const product of Array.from(productMap.values())) {
-          const catId = product.categoryId || 0;
-          const catName = product.category || 'Uncategorized';
-
-          if (!categoryMap.has(catId)) {
-            categoryMap.set(catId, {
-              categoryId: catId,
-              categoryName: catName,
-              products: []
-            });
-          }
-
-          categoryMap.get(catId)!.products.push(product);
-        }
-
-        // Sort products within each category
-        for (const category of categoryMap.values()) {
-          category.products.sort((a, b) => b.frequency - a.frequency);
-        }
-
-        // Step 5: Format output
-        const formatItem = (item: ProductFrequency, index: number, showCategory: boolean = false): string => {
-          const brand = item.brand ? ` (${item.brand})` : '';
-          const avgPrice = item.averagePrice ? `${item.averagePrice.toFixed(2)} Kč` : 'N/A';
-          const lastOrder = item.lastOrderDate ? new Date(item.lastOrderDate).toLocaleDateString() : 'N/A';
-          const category = showCategory && item.category ? ` • ${item.category}` : '';
-
-          return `${index + 1}. ${item.productName}${brand}${category}
-   📊 ${item.frequency}× orders • ${item.totalQuantity} units • 💰 Avg: ${avgPrice} • 📅 Last: ${lastOrder}
-   🆔 ${item.productId}`;
-        };
-
-        // Build overall top items section
-        let output = `🛒 MOST FREQUENTLY PURCHASED ITEMS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📈 Analysis: ${processedOrders} orders • ${totalProducts} total items
-
-🏆 TOP ${sortedProducts.length} OVERALL:
-
-${sortedProducts.map((item, idx) => formatItem(item, idx, true)).join('\n\n')}`;
-
-        // Add category breakdown if requested
-        if (show_categories) {
-          // Sort categories by total frequency
-          const sortedCategories = Array.from(categoryMap.values())
-            .sort((a, b) => {
-              const aTotal = a.products.reduce((sum, p) => sum + p.frequency, 0);
-              const bTotal = b.products.reduce((sum, p) => sum + p.frequency, 0);
-              return bTotal - aTotal;
-            });
-
-          output += '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📂 TOP ITEMS BY CATEGORY:\n';
-
-          for (const category of sortedCategories) {
-            const topCategoryProducts = category.products.slice(0, top_per_category);
-            const totalCategoryFrequency = category.products.reduce((sum, p) => sum + p.frequency, 0);
-
-            output += `\n\n📦 ${category.categoryName.toUpperCase()} (${totalCategoryFrequency} total orders)\n${'─'.repeat(40)}\n`;
-            output += topCategoryProducts.map((item, idx) => formatItem(item, idx, false)).join('\n\n');
-          }
-        }
-
-        output += '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 Tip: Use product IDs with add_to_cart to quickly reorder your favorites!';
+        const items = sortedProducts.map((item: ProductFrequency) => ({
+          id: parseInt(item.productId, 10),
+          name: item.productName,
+          brand: brandMap[item.productId] || null,
+          frequency: item.frequency,
+          total_units: item.totalQuantity,
+          avg_price_czk: item.averagePrice ? parseFloat(item.averagePrice.toFixed(2)) : null,
+          last_ordered: item.lastOrderDate || null,
+        }));
 
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              analyzed_orders: processedOrders,
+              total_distinct_products: productMap.size,
+              items,
+            }, null, 2)
+          }]
         };
       } catch (error) {
         return {

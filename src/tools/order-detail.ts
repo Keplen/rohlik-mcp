@@ -7,14 +7,14 @@ export function createOrderDetailTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_order_detail",
     definition: {
       title: "Get Order Detail",
-      description: "Get detailed information about a specific order by its ID, including all products",
+      description: "Returns full order as JSON: {id, date, status, delivery_type, delivery_slot{from,to}, total_czk, delivery_czk, currency, items_count, items[{id, name, quantity, unit, textual_amount, paid_czk, unit_price_czk}]}. paid_czk is what was actually charged (after any discounts at time of order). WARNING: sum(items[*].paid_czk) may be LESS than total_czk by 10-30 Kč — Rohlik bag/packaging fees are not in the items array. Do not use item sum as order total.",
       inputSchema: {
         orderId: z.string().describe("The order ID to fetch details for")
       }
     },
     handler: async (args: { orderId: string }) => {
       const { orderId } = args;
-      
+
       try {
         const api = createRohlikAPI();
         const orderDetail = await api.getOrderDetail(orderId);
@@ -30,52 +30,37 @@ export function createOrderDetailTool(createRohlikAPI: () => RohlikAPI) {
           };
         }
 
-        const formatProduct = (product: any, index: number): string => {
-          const name = product.name || 'Unknown product';
-          const amount = product.amount || 1;
-          const textualAmount = product.textualAmount || '';
-          const totalPrice = product.priceComposition?.total?.amount ?? 0;
-          const unitPrice = product.priceComposition?.unit?.amount ?? 0;
-          const productId = product.id || 'N/A';
+        const order = orderDetail;
+        const items = (order.items || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          quantity: p.amount ?? 1,
+          unit: p.unit || null,
+          textual_amount: p.textualAmount || null,
+          paid_czk: p.priceComposition?.total?.amount ?? null,
+          unit_price_czk: p.priceComposition?.unit?.amount ?? null,
+        }));
 
-          return `  ${index + 1}. [${productId}] ${name}
-     Amount: ${amount}x (${textualAmount})
-     Price: ${totalPrice} ${getCurrency()} (unit: ${unitPrice} ${getCurrency()})`;
+        const result = {
+          id: String(order.id || orderId),
+          date: order.orderTime || null,
+          status: order.state || null,
+          delivery_type: order.deliveryType || null,
+          delivery_slot: order.deliverySlot
+            ? { from: order.deliverySlot.since, to: order.deliverySlot.till }
+            : null,
+          total_czk: order.priceComposition?.total?.amount ?? null,
+          delivery_czk: order.priceComposition?.delivery?.amount ?? 0,
+          currency: getCurrency(),
+          items_count: items.length,
+          items,
         };
 
-        const order = orderDetail;
-        const orderNumber = order.id || orderId;
-        const orderDate = order.orderTime || 'Unknown date';
-        const totalPrice = order.priceComposition?.total?.amount ?? 'Unknown';
-        const deliveryPrice = order.priceComposition?.delivery?.amount ?? 0;
-        const status = order.state || 'Unknown status';
-        const deliverySlot = order.deliverySlot;
-        const deliveryInfo = deliverySlot
-          ? `${deliverySlot.since} - ${deliverySlot.till}`
-          : 'N/A';
-        const items = order.items || [];
-
-        const output = `ORDER DETAILS - ${orderNumber}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Order Date: ${orderDate}
-Delivery Slot: ${deliveryInfo}
-Delivery Type: ${order.deliveryType || 'N/A'}
-Status: ${status}
-Total: ${totalPrice} ${getCurrency()} (delivery: ${deliveryPrice} ${getCurrency()})
-
-PRODUCTS (${items.length} items):
-${items.map(formatProduct).join('\n\n')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Total: ${totalPrice} ${getCurrency()}`;
-
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2)
+          }]
         };
       } catch (error) {
         return {

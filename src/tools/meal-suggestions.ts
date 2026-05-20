@@ -89,7 +89,7 @@ export function createMealSuggestionsTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_meal_suggestions",
     definition: {
       title: "Get Meal Suggestions",
-      description: "Get smart shopping suggestions for specific meal types (breakfast, lunch, dinner, etc.) based on your purchase history",
+      description: "Returns products from past orders relevant to a meal type as JSON: {meal_type, analyzed_orders, count, items[{id, name, brand, frequency, total_units, avg_price_czk}]}. Items are sorted by purchase frequency (prefer_frequent=true) or quantity. avg_price_czk reflects historical paid prices. Note: category filtering is best-effort based on product name matching — results cover all relevant product types regardless. Use id with search_products to get current price before add_to_cart.",
       inputSchema: {
         meal_type: z.enum(["breakfast", "lunch", "dinner", "snack", "baking", "drinks", "healthy"])
           .describe("Type of meal or occasion (enum): breakfast, lunch, dinner, snack, baking, drinks, or healthy"),
@@ -161,7 +161,7 @@ export function createMealSuggestionsTool(createRohlikAPI: () => RohlikAPI) {
             if (!orderDetail) continue;
 
             processedOrders++;
-            const products = orderDetail.products || orderDetail.items || [];
+            const products = orderDetail.items || orderDetail.products || [];
 
             for (const product of products) {
               const productId = product.productId || product.id;
@@ -187,11 +187,11 @@ export function createMealSuggestionsTool(createRohlikAPI: () => RohlikAPI) {
               if (productMap.has(key)) {
                 const existing = productMap.get(key)!;
                 existing.frequency++;
-                existing.totalQuantity += (product.quantity || 1);
-
-                if (product.price) {
+                existing.totalQuantity += (product.amount || product.quantity || 1);
+                const paidPrice = product.priceComposition?.total?.amount;
+                if (paidPrice) {
                   const currentAvg = existing.averagePrice || 0;
-                  existing.averagePrice = (currentAvg * (existing.frequency - 1) + product.price) / existing.frequency;
+                  existing.averagePrice = (currentAvg * (existing.frequency - 1) + paidPrice) / existing.frequency;
                 }
               } else {
                 productMap.set(key, {
@@ -199,8 +199,8 @@ export function createMealSuggestionsTool(createRohlikAPI: () => RohlikAPI) {
                   productName,
                   brand: product.brand || '',
                   frequency: 1,
-                  totalQuantity: product.quantity || 1,
-                  averagePrice: product.price || 0,
+                  totalQuantity: product.amount || product.quantity || 1,
+                  averagePrice: product.priceComposition?.total?.amount || 0,
                   category: categoryName
                 });
               }
@@ -212,62 +212,52 @@ export function createMealSuggestionsTool(createRohlikAPI: () => RohlikAPI) {
 
         if (productMap.size === 0) {
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: `No items found for ${meal_type} in your order history. Try a different meal type or check if you have enough order history.`
-              }
-            ]
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ error: "No items found", meal_type, analyzed_orders: processedOrders })
+            }]
           };
         }
 
-        // Sort by frequency if preferred, otherwise by recency
-        const sortedProducts = Array.from(productMap.values())
-          .sort((a, b) => {
-            if (prefer_frequent) {
-              return b.frequency - a.frequency;
+        // Batch fetch brands
+        const allIds = Array.from(productMap.keys());
+        const brandMap: Record<string, string> = {};
+        try {
+          const batchSize = 20;
+          for (let i = 0; i < allIds.length; i += batchSize) {
+            const chunk = allIds.slice(i, i + batchSize);
+            const params = chunk.map((id: string) => `products=${id}`).join('&');
+            const brandData = await api.makeRequest(`/api/v1/products?${params}`);
+            const items = brandData.products || (Array.isArray(brandData) ? brandData : []);
+            for (const p of items) {
+              if (p.id && p.brand) brandMap[String(p.id)] = p.brand;
             }
-            return b.totalQuantity - a.totalQuantity;
-          })
+          }
+        } catch (e) { /* brand fetch is best-effort */ }
+
+        const sortedProducts = Array.from(productMap.values())
+          .sort((a, b) => prefer_frequent ? b.frequency - a.frequency : b.totalQuantity - a.totalQuantity)
           .slice(0, items_count);
 
-        // Format output
-        const mealEmojis: Record<string, string> = {
-          breakfast: "🍳",
-          lunch: "🍽️",
-          dinner: "🍴",
-          snack: "🍿",
-          baking: "🧁",
-          drinks: "🥤",
-          healthy: "🥗"
-        };
-
-        const emoji = mealEmojis[meal_type] || "🛒";
-        const formatItem = (item: ProductFrequency, index: number): string => {
-          const brand = item.brand ? ` (${item.brand})` : '';
-          const avgPrice = item.averagePrice ? `${item.averagePrice.toFixed(2)} Kč` : 'N/A';
-          const category = item.category ? ` • ${item.category}` : '';
-
-          return `${index + 1}. ${item.productName}${brand}${category}
-   📊 Ordered ${item.frequency}× • 💰 ${avgPrice} • 🆔 ${item.productId}`;
-        };
-
-        const output = `${emoji} ${meal_type.toUpperCase()} SUGGESTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📈 Analyzed ${processedOrders} orders • Found ${productMap.size} relevant items
-🎯 Relevant categories: ${relevantCategories.slice(0, 5).join(", ")}${relevantCategories.length > 5 ? '...' : ''}
-
-${prefer_frequent ? '🏆 TOP ITEMS YOU FREQUENTLY ORDER:' : '📦 SUGGESTED ITEMS:'}
-
-${sortedProducts.map(formatItem).join('\n\n')}`;
+        const items = sortedProducts.map((item: ProductFrequency) => ({
+          id: parseInt(item.productId, 10),
+          name: item.productName,
+          brand: brandMap[item.productId] || null,
+          frequency: item.frequency,
+          total_units: item.totalQuantity,
+          avg_price_czk: item.averagePrice ? parseFloat(item.averagePrice.toFixed(2)) : null,
+        }));
 
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              meal_type,
+              analyzed_orders: processedOrders,
+              count: items.length,
+              items,
+            }, null, 2)
+          }]
         };
       } catch (error) {
         return {

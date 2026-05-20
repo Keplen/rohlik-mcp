@@ -7,14 +7,14 @@ export function createOrderHistoryTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_order_history",
     definition: {
       title: "Get Order History",
-      description: "Get your past delivered orders",
+      description: "Returns delivered orders as JSON: {count, orders[{id, date, total_czk, currency, items_count, items_total_quantity}]}. Use id with get_order_detail to see full product list. date is ISO 8601. All orders are delivered (endpoint only returns delivered).",
       inputSchema: {
         limit: z.number().min(1).max(100).default(10).describe("Maximum number of orders to return (1-100, default: 10)")
       }
     },
     handler: async (args: { limit?: number }) => {
       const { limit = 10 } = args;
-      
+
       try {
         const api = createRohlikAPI();
         const orderHistory = await api.getOrderHistory(limit);
@@ -30,28 +30,21 @@ export function createOrderHistoryTool(createRohlikAPI: () => RohlikAPI) {
           };
         }
 
-        const formatOrder = (order: any, index: number): string => {
-          const orderDate = order.deliveredAt || order.createdAt || 'Unknown date';
-          const totalPrice = order.totalPrice || order.price || 'Unknown price';
-          const orderNumber = order.orderNumber || order.id || `Order ${index + 1}`;
-          const status = order.status || 'Delivered';
-          
-          return `${index + 1}. ${orderNumber}
-   Date: ${orderDate}
-   Total: ${totalPrice} ${getCurrency()}
-   Status: ${status}`;
-        };
-
         const orders = Array.isArray(orderHistory) ? orderHistory : [orderHistory];
-        const output = `📋 ORDER HISTORY (${orders.length} orders):\n\n${orders.map(formatOrder).join('\n\n')}`;
+        const mapped = orders.map((order: any) => ({
+          id: String(order.id),
+          date: order.orderTime || null,
+          total_czk: order.priceComposition?.total?.amount ?? null,
+          currency: getCurrency(),
+          items_count: order.itemsCount ?? null,
+          items_total_quantity: order.itemsTotalQuantity ?? null,
+        }));
 
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ count: mapped.length, orders: mapped }, null, 2)
+          }]
         };
       } catch (error) {
         return {

@@ -1,8 +1,8 @@
 {
-  "name": "@tomaspavlin/rohlik-mcp",
-  "version": "3.3.0",
+  "name": "@keplen/rohlik-mcp",
+  "version": "1.0.0",
   "type": "module",
-  "description": "MCP server for controlling Rohlik.cz grocery shopping website",
+  "description": "Extended MCP server for Rohlik.cz — JSON outputs, Maia AI assistant integration, allergen checking",
   "keywords": [
     "mcp",
     "rohlik",
@@ -10,7 +10,7 @@
     "shopping",
     "api"
   ],
-  "author": "Tomas Pavlin",
+  "author": "Zbynek Poskocil (fork of @tomaspavlin/rohlik-mcp)",
   "license": "MIT",
   "main": "dist/index.js",
   "bin": "dist/index.js",
@@ -19,14 +19,11 @@
     "README.md",
     "LICENSE"
   ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/tomaspavlin/rohlik-mcp.git"
-  },
+  "repository": "https://github.com/Keplen/rohlik-mcp",
   "bugs": {
-    "url": "https://github.com/tomaspavlin/rohlik-mcp/issues"
+    "url": "https://github.com/Keplen/rohlik-mcp/issues"
   },
-  "homepage": "https://github.com/tomaspavlin/rohlik-mcp#readme",
+  "homepage": "https://github.com/Keplen/rohlik-mcp#readme",
   "engines": {
     "node": ">=18.0.0"
   },

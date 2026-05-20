@@ -15,9 +15,11 @@ export class RohlikAPI {
   private credentials: RohlikCredentials;
   private userId?: number;
   private addressId?: number;
-  private sessionCookies: string = '';
+  sessionCookies: string = '';
   private lastRequestTime: number = 0;
   private readonly minRequestInterval: number = 100; // Minimum 100ms between requests
+  isLoggedIn: boolean = false;
+  _loginPromise: Promise<void> | null = null; // Mutex — prevents concurrent logins
 
   constructor(credentials: RohlikCredentials) {
     this.credentials = credentials;
@@ -35,10 +37,10 @@ export class RohlikAPI {
     this.lastRequestTime = Date.now();
   }
 
-  private async makeRequest<T>(
+  async makeRequest<T = any>(
     url: string,
     options: Partial<Parameters<typeof fetch>[1]> = {}
-  ): Promise<RohlikAPIResponse<T>> {
+  ): Promise<any> {
     // Apply rate limiting to prevent HTTP 429 errors
     await this.rateLimit();
 
@@ -64,20 +66,55 @@ export class RohlikAPI {
       headers
     });
 
-    // Store cookies for session management
-    const setCookieHeader = response.headers.get('set-cookie');
-    if (setCookieHeader) {
-      this.sessionCookies = setCookieHeader;
+    // Merge cookies — parse existing + new Set-Cookie headers into a flat map
+    // headers.raw() gives array of all Set-Cookie values (node-fetch API)
+    const rawCookies = (response.headers as any).raw?.()?.['set-cookie'] || [];
+    if (rawCookies.length > 0) {
+      const jar: Record<string, string> = {};
+      // Parse existing cookies into map
+      if (this.sessionCookies) {
+        this.sessionCookies.split('; ').forEach((pair: string) => {
+          const idx = pair.indexOf('=');
+          if (idx > 0) jar[pair.slice(0, idx).trim()] = pair.slice(idx + 1);
+        });
+      }
+      // Merge new cookies (name=value before first semicolon wins)
+      rawCookies.forEach((setCookie: string) => {
+        const nameValue = setCookie.split(';')[0].trim();
+        const idx = nameValue.indexOf('=');
+        if (idx > 0) jar[nameValue.slice(0, idx).trim()] = nameValue.slice(idx + 1);
+      });
+      this.sessionCookies = Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
     }
 
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        // Session expired — reset so next call re-logs in
+        this.isLoggedIn = false;
+        this.sessionCookies = '';
+        this.userId = undefined;
+      }
       throw new RohlikAPIError(`HTTP ${response.status}: ${response.statusText}`, response.status);
     }
 
-    return await response.json() as RohlikAPIResponse<T>;
+    return await response.json();
   }
 
   async login(): Promise<void> {
+    if (this.isLoggedIn && this.sessionCookies && this.userId) {
+      return; // Already logged in — skip
+    }
+    // Mutex: if login is already in progress, wait for it instead of starting another
+    if (this._loginPromise) {
+      return this._loginPromise;
+    }
+    this._loginPromise = this._doLogin().finally(() => {
+      this._loginPromise = null;
+    });
+    return this._loginPromise;
+  }
+
+  private async _doLogin(): Promise<void> {
     const loginData = {
       email: this.credentials.username,
       password: this.credentials.password,
@@ -87,7 +124,7 @@ export class RohlikAPI {
     const debug = process.env.ROHLIK_DEBUG === 'true';
 
     try {
-      const response = await this.makeRequest<any>('/services/frontend-service/login', {
+      const response = await this.makeRequest('/services/frontend-service/login', {
         method: 'POST',
         body: JSON.stringify(loginData)
       });
@@ -130,6 +167,7 @@ export class RohlikAPI {
 
       this.userId = response.data.user.id;
       this.addressId = response.data?.address?.id;
+      this.isLoggedIn = true;
 
       if (debug) {
         console.error(`[ROHLIK_DEBUG] Login successful. User ID: ${this.userId}, Address ID: ${this.addressId}`);
@@ -177,12 +215,12 @@ export class RohlikAPI {
         canCorrect: 'true'
       });
 
-      const response = await this.makeRequest<any>(`/services/frontend-service/search-metadata?${searchParams}`);
-      
+      const response = await this.makeRequest(`/services/frontend-service/search-metadata?${searchParams}`);
+
       let products = response.data?.productList || [];
 
       // Remove sponsored content
-      products = products.filter((p: any) => 
+      products = products.filter((p: any) =>
         !p.badge?.some((badge: any) => badge.slug === 'promoted')
       );
 
@@ -212,7 +250,7 @@ export class RohlikAPI {
         return result;
       });
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -245,7 +283,7 @@ export class RohlikAPI {
 
       return addedProducts;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -253,7 +291,7 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/services/frontend-service/v2/cart');
+      const response = await this.makeRequest('/services/frontend-service/v2/cart');
       const data = response.data || {};
 
       return {
@@ -266,12 +304,32 @@ export class RohlikAPI {
           name: productData.productName || '',
           quantity: productData.quantity || 0,
           price: productData.price || 0,
+          sale_percents: productData.salePercents || 0,
+          original_unit_price: productData.originalPricePerUnit || 0,
+          volume: productData.volume || 0,
+          unit: productData.unit || '',
           category_name: productData.primaryCategoryName || '',
           brand: productData.brand || ''
         }))
       };
     } finally {
-      await this.logout();
+      // Shared session — no logout
+    }
+  }
+
+  async clearCart(): Promise<boolean> {
+    await this.login();
+
+    try {
+      await this.makeRequest('/services/frontend-service/v2/cart?clear=true', {
+        method: 'DELETE'
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to clear cart:', error);
+      return false;
+    } finally {
+      // Shared session — no logout
     }
   }
 
@@ -287,7 +345,7 @@ export class RohlikAPI {
       console.error(`Failed to remove item ${orderFieldId}:`, error);
       return false;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -295,7 +353,7 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>(`/api/v1/shopping-lists/id/${shoppingListId}`);
+      const response = await this.makeRequest(`/api/v1/shopping-lists/id/${shoppingListId}`);
       // Handle both wrapped and direct responses
       const listData = response.data || response;
       return {
@@ -303,7 +361,7 @@ export class RohlikAPI {
         products: listData?.products || []
       };
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -312,7 +370,7 @@ export class RohlikAPI {
 
     try {
       const result: AccountData = {};
-      
+
       // Define endpoints similar to the Python implementation
       const endpoints = {
         delivery: '/services/frontend-service/first-delivery?reasonableDeliveryTime=true',
@@ -329,7 +387,7 @@ export class RohlikAPI {
       // Fetch data from all endpoints
       for (const [endpoint, path] of Object.entries(endpoints)) {
         try {
-          const response = await this.makeRequest<any>(path);
+          const response = await this.makeRequest(path);
           (result as any)[endpoint] = response.data || response;
         } catch (error) {
           console.error(`Error fetching ${endpoint}:`, error);
@@ -341,7 +399,7 @@ export class RohlikAPI {
       if (this.userId && this.addressId) {
         try {
           const nextDeliveryPath = `/services/frontend-service/timeslots-api/0?userId=${this.userId}&addressId=${this.addressId}&reasonableDeliveryTime=true`;
-          const response = await this.makeRequest<any>(nextDeliveryPath);
+          const response = await this.makeRequest(nextDeliveryPath);
           result.next_delivery_slot = response.data || response;
         } catch (error) {
           console.error('Error fetching next_delivery_slot:', error);
@@ -353,7 +411,7 @@ export class RohlikAPI {
 
       // Get cart content (call internal method to avoid double login)
       try {
-        const response = await this.makeRequest<any>('/services/frontend-service/v2/cart');
+        const response = await this.makeRequest('/services/frontend-service/v2/cart');
         const data = response.data || {};
 
         result.cart = {
@@ -366,6 +424,10 @@ export class RohlikAPI {
             name: productData.productName || '',
             quantity: productData.quantity || 0,
             price: productData.price || 0,
+            sale_percents: productData.salePercents || 0,
+            original_unit_price: productData.originalPricePerUnit || 0,
+            volume: productData.volume || 0,
+            unit: productData.unit || '',
             category_name: productData.primaryCategoryName || '',
             brand: productData.brand || ''
           }))
@@ -377,7 +439,7 @@ export class RohlikAPI {
 
       return result;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -385,10 +447,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>(`/api/v3/orders/delivered?offset=0&limit=${limit}`);
+      const response = await this.makeRequest(`/api/v3/orders/delivered?offset=0&limit=${limit}`);
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -396,10 +458,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/services/frontend-service/first-delivery?reasonableDeliveryTime=true');
+      const response = await this.makeRequest('/services/frontend-service/first-delivery?reasonableDeliveryTime=true');
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -407,10 +469,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/api/v3/orders/upcoming');
+      const response = await this.makeRequest('/api/v3/orders/upcoming');
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -418,10 +480,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/services/frontend-service/premium/profile');
+      const response = await this.makeRequest('/services/frontend-service/premium/profile');
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -430,13 +492,13 @@ export class RohlikAPI {
 
     try {
       if (this.userId && this.addressId) {
-        const response = await this.makeRequest<any>(`/services/frontend-service/timeslots-api/0?userId=${this.userId}&addressId=${this.addressId}&reasonableDeliveryTime=true`);
+        const response = await this.makeRequest(`/services/frontend-service/timeslots-api/0?userId=${this.userId}&addressId=${this.addressId}&reasonableDeliveryTime=true`);
         return response.data || response;
       } else {
         throw new RohlikAPIError('User ID or Address ID not available');
       }
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -444,10 +506,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/services/frontend-service/announcements/top');
+      const response = await this.makeRequest('/services/frontend-service/announcements/top');
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -455,10 +517,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>('/api/v1/reusable-bags/user-info');
+      const response = await this.makeRequest('/api/v1/reusable-bags/user-info');
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -467,7 +529,7 @@ export class RohlikAPI {
 
     try {
       // Get subcategory IDs
-      const subResponse = await this.makeRequest<any>('/api/v1/categories/sales/subcategories');
+      const subResponse = await this.makeRequest('/api/v1/categories/sales/subcategories');
       const subData = subResponse as any;
       const categoryIds: number[] = subData.categoryIds || [];
 
@@ -482,7 +544,7 @@ export class RohlikAPI {
       }
       params.append('type', 'favorite-sales');
 
-      const catResponse = await this.makeRequest<any>(`/api/v1/categories?${params}`);
+      const catResponse = await this.makeRequest(`/api/v1/categories?${params}`);
       const categories = Array.isArray(catResponse) ? catResponse : [];
 
       return categories.map((c: any) => ({
@@ -491,7 +553,7 @@ export class RohlikAPI {
         slug: c.slug
       }));
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -515,7 +577,7 @@ export class RohlikAPI {
         excludeProductIds: ''
       });
 
-      const listResponse = await this.makeRequest<any>(
+      const listResponse = await this.makeRequest(
         `/api/v1/categories/${saleType}${categoryPath}/products?${listParams}`
       );
 
@@ -533,13 +595,13 @@ export class RohlikAPI {
       }
       cardParams.append('categoryType', saleType);
 
-      const cardResponse = await this.makeRequest<any>(
+      const cardResponse = await this.makeRequest(
         `/api/v1/products/card?${cardParams}`
       );
 
       return Array.isArray(cardResponse) ? cardResponse : [];
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 
@@ -547,10 +609,10 @@ export class RohlikAPI {
     await this.login();
 
     try {
-      const response = await this.makeRequest<any>(`/api/v3/orders/${orderId}`);
+      const response = await this.makeRequest(`/api/v3/orders/${orderId}`);
       return response.data || response;
     } finally {
-      await this.logout();
+      // Shared session — no logout
     }
   }
 }

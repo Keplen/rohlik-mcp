@@ -19,6 +19,9 @@ import { createFrequentItemsTool } from "./tools/frequent-items.js";
 import { createMealSuggestionsTool } from "./tools/meal-suggestions.js";
 import { createShoppingScenariosTool } from "./tools/shopping-scenarios.js";
 import { createDiscountedItemsTool } from "./tools/discounted-items.js";
+import { createProductDetailTool } from "./tools/get-product-detail.js";
+import { createCheckAllergensTool } from "./tools/check-allergens.js";
+import { createAskMaiaTool } from "./tools/ask-maia.js";
 
 const server = new McpServer(
   {
@@ -43,9 +46,13 @@ function getCredentials() {
   return { username, password };
 }
 
-function createRohlikAPI() {
-  const credentials = getCredentials();
-  return new RohlikAPI(credentials);
+// Singleton — login once, reuse session across all tool calls
+let _sharedApi: RohlikAPI | null = null;
+function createRohlikAPI(): RohlikAPI {
+  if (!_sharedApi) {
+    _sharedApi = new RohlikAPI(getCredentials());
+  }
+  return _sharedApi;
 }
 
 // Register all tools
@@ -65,12 +72,16 @@ const frequentItems = createFrequentItemsTool(createRohlikAPI);
 const mealSuggestions = createMealSuggestionsTool(createRohlikAPI);
 const shoppingScenarios = createShoppingScenariosTool();
 const discountedItems = createDiscountedItemsTool(createRohlikAPI);
+const productDetail = createProductDetailTool();
+const checkAllergens = createCheckAllergensTool();
+const askMaia = createAskMaiaTool(createRohlikAPI);
 
 // Core functionality
 server.registerTool(searchProducts.name, searchProducts.definition, searchProducts.handler);
 server.registerTool(cartTools.addToCart.name, cartTools.addToCart.definition, cartTools.addToCart.handler);
 server.registerTool(cartTools.getCartContent.name, cartTools.getCartContent.definition, cartTools.getCartContent.handler);
 server.registerTool(cartTools.removeFromCart.name, cartTools.removeFromCart.definition, cartTools.removeFromCart.handler);
+server.registerTool(cartTools.clearCart.name, cartTools.clearCart.definition, cartTools.clearCart.handler);
 server.registerTool(shoppingLists.name, shoppingLists.definition, shoppingLists.handler);
 server.registerTool(accountData.name, accountData.definition, accountData.handler);
 
@@ -95,6 +106,15 @@ server.registerTool(shoppingScenarios.name, shoppingScenarios.definition, shoppi
 
 // Deals & discounts
 server.registerTool(discountedItems.name, discountedItems.definition, discountedItems.handler);
+
+// Product detail (ingredients, nutrition, GF status)
+server.registerTool(productDetail.name, productDetail.definition, productDetail.handler);
+
+// Batch allergen check — lightweight alternative to multiple get_product_detail calls
+server.registerTool(checkAllergens.name, checkAllergens.definition, checkAllergens.handler);
+
+// Rohlik AI assistant — Maia
+server.registerTool(askMaia.name, askMaia.definition, askMaia.handler);
 
 async function main() {
   const transport = new StdioServerTransport();
