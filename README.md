@@ -92,16 +92,6 @@ npm test         # unit testy
 npm run inspect  # test přes MCP Inspector
 ```
 
-## Debug
-
-```json
-"env": {
-  "ROHLIK_USERNAME": "...",
-  "ROHLIK_PASSWORD": "...",
-  "ROHLIK_DEBUG": "true"
-}
-```
-
 ## License
 
 MIT License — viz [LICENSE](LICENSE).
