@@ -96,5 +96,4 @@ npm run inspect  # test přes MCP Inspector
 
 MIT License — viz [LICENSE](LICENSE).
 
-Původní projekt: [tomaspavlin/rohlik-mcp](https://github.com/tomaspavlin/rohlik-mcp) (Tomas Pavlin).  
-Reverse engineering Rohlik API: [dvejsada/HA-RohlikCZ](https://github.com/dvejsada/HA-RohlikCZ).
+Původní MCP server: [tomaspavlin/rohlik-mcp](https://github.com/tomaspavlin/rohlik-mcp) (Tomas Pavlin).
