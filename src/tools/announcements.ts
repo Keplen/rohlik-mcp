@@ -5,62 +5,20 @@ export function createAnnouncementsTool(createRohlikAPI: () => RohlikAPI) {
     name: "get_announcements",
     definition: {
       title: "Get Announcements",
-      description: "Get current announcements and notifications from Rohlik",
+      description: "Returns current Rohlik announcements as JSON: {announcements: [{title, message, date}]} or {announcements: []} when none active.",
       inputSchema: {}
     },
     handler: async () => {
       try {
         const api = createRohlikAPI();
-        const announcements = await api.getAnnouncements();
-
-        if (!announcements || (Array.isArray(announcements) && announcements.length === 0)) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "No announcements available."
-              }
-            ]
-          };
-        }
-
-        const formatAnnouncements = (data: any): string => {
-          if (Array.isArray(data)) {
-            return `📢 ANNOUNCEMENTS:\n\n${data.map((announcement, index) => 
-              `${index + 1}. ${announcement.title || 'Announcement'}
-   ${announcement.message || announcement.content || announcement.text || 'No content'}
-   ${announcement.date ? `Date: ${announcement.date}` : ''}`
-            ).join('\n\n')}`;
-          }
-          
-          if (data.title || data.message) {
-            return `📢 ANNOUNCEMENT:
-   ${data.title || 'Announcement'}
-   ${data.message || data.content || data.text || 'No content'}
-   ${data.date ? `Date: ${data.date}` : ''}`;
-          }
-          
-          return `📢 ANNOUNCEMENTS:\n${JSON.stringify(data, null, 2)}`;
-        };
-
-        const output = formatAnnouncements(announcements);
-
+        const data = await api.getAnnouncements();
+        const announcements = Array.isArray(data) ? data : (data ? [data] : []);
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{ type: "text" as const, text: JSON.stringify({ announcements }, null, 2) }]
         };
       } catch (error) {
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: error instanceof Error ? error.message : String(error)
-            }
-          ],
+          content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
           isError: true
         };
       }

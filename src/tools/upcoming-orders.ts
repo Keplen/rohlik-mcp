@@ -1,64 +1,30 @@
 import { RohlikAPI } from "../rohlik-api.js";
-import { getCurrency } from "../locale.js";
 
 export function createUpcomingOrdersTool(createRohlikAPI: () => RohlikAPI) {
   return {
     name: "get_upcoming_orders",
     definition: {
       title: "Get Upcoming Orders",
-      description: "Get your scheduled upcoming orders",
+      description: "Returns scheduled upcoming orders as JSON: {count, orders[{id, date, total_czk, items_count}]} or {count: 0, orders: []} when none scheduled.",
       inputSchema: {}
     },
     handler: async () => {
       try {
         const api = createRohlikAPI();
-        const upcomingOrders = await api.getUpcomingOrders();
-
-        if (!upcomingOrders || (Array.isArray(upcomingOrders) && upcomingOrders.length === 0)) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "No upcoming orders found."
-              }
-            ]
-          };
-        }
-
-        const formatUpcomingOrder = (order: any, index: number): string => {
-          const deliveryDate = order.deliveryDate || order.scheduledAt || 'Unknown date';
-          const deliveryTime = order.deliveryTime || order.timeSlot || 'Unknown time';
-          const totalPrice = order.totalPrice || order.price || 'Unknown price';
-          const orderNumber = order.orderNumber || order.id || `Order ${index + 1}`;
-          const status = order.status || 'Scheduled';
-          const itemCount = order.itemCount || order.items?.length || 'Unknown';
-          
-          return `${index + 1}. ${orderNumber}
-   Delivery: ${deliveryDate} ${deliveryTime}
-   Total: ${totalPrice} ${getCurrency()}
-   Items: ${itemCount}
-   Status: ${status}`;
-        };
-
-        const orders = Array.isArray(upcomingOrders) ? upcomingOrders : [upcomingOrders];
-        const output = `📦 UPCOMING ORDERS (${orders.length} orders):\n\n${orders.map(formatUpcomingOrder).join('\n\n')}`;
-
+        const data = await api.getUpcomingOrders();
+        const raw = Array.isArray(data) ? data : (data ? [data] : []);
+        const orders = raw.map((o: any) => ({
+          id: String(o.id || o.orderNumber || ''),
+          date: o.orderTime || o.deliveryDate || o.scheduledAt || null,
+          total_czk: o.priceComposition?.total?.amount ?? o.totalPrice ?? null,
+          items_count: o.itemsCount ?? o.itemCount ?? null,
+        }));
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: output
-            }
-          ]
+          content: [{ type: "text" as const, text: JSON.stringify({ count: orders.length, orders }, null, 2) }]
         };
       } catch (error) {
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: error instanceof Error ? error.message : String(error)
-            }
-          ],
+          content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
           isError: true
         };
       }
